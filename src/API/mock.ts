@@ -432,9 +432,10 @@ export class MockNavigationClient {
         } else {
           // 处理当前层级的子分组（父ID已处理）
           levelGroups = data.groups.filter(group => 
-            group.parent_id && 
+            group.parent_id !== undefined && 
             group.parent_id !== null && 
             groupMap.has(group.parent_id) && 
+            group.id !== undefined && 
             !processedGroups.has(group.id)
           );
         }
@@ -480,7 +481,10 @@ export class MockNavigationClient {
             stats.groups.created++;
           }
           
-          processedGroups.add(importGroup.id);
+          // 确保importGroup.id是number类型
+          if (importGroup.id) {
+            processedGroups.add(importGroup.id);
+          }
         }
         
         level++;

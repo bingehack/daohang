@@ -818,6 +818,7 @@ export class NavigationAPI {
               group.parent_id && 
               group.parent_id !== null && 
               groupMap.has(group.parent_id) && 
+              group.id !== undefined && 
               !processedGroups.has(group.id)
             );
           }
@@ -847,7 +848,10 @@ export class NavigationAPI {
               stats.groups.created++;
             }
             
-            processedGroups.add(group.id);
+            // 确保group.id是number类型
+            if (group.id) {
+              processedGroups.add(group.id);
+            }
           }
 
           // 执行当前层级的分组创建
@@ -869,6 +873,11 @@ export class NavigationAPI {
                   groupMap.set(group.id, newId);
                 }
               }
+              
+              // 确保group.id是number类型
+              if (group.id) {
+                processedGroups.add(group.id);
+              }
             }
           }
 
@@ -876,7 +885,7 @@ export class NavigationAPI {
         }
 
         // 检查是否有未处理的分组
-        const unprocessedGroups = data.groups.filter(group => !processedGroups.has(group.id));
+        const unprocessedGroups = data.groups.filter(group => group.id && !processedGroups.has(group.id));
         if (unprocessedGroups.length > 0) {
           console.warn(`未处理的分组：${unprocessedGroups.map(g => g.name).join(', ')}`);
         }
