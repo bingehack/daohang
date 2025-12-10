@@ -777,7 +777,9 @@ export class NavigationAPI {
 
       // 批量导入策略：
       // 1. 先获取所有现有分组名称和站点URL，避免重复查询
-      // 2. 使用batch方法批量处理创建和更新操作
+      // 2. 创建分组ID映射，确保层级关系正确
+      // 3. 按层级顺序导入分组，确保子分组能找到父分组
+      // 4. 使用batch方法批量处理创建和更新操作
 
       // 获取所有现有分组
       const existingGroupsResult = await this.db
@@ -797,97 +799,91 @@ export class NavigationAPI {
       const groupMap = new Map<number, number>();
       const batchStatements: D1PreparedStatement[] = [];
 
-      // 将分组分为根分组和子分组
-      const rootGroups = data.groups.filter(group => !group.parent_id || group.parent_id === null);
-      const subGroups = data.groups.filter(group => group.parent_id && group.parent_id !== null);
+      // 按层级处理分组：先处理根分组，再处理一级子分组，以此类推
+      const processGroupsByLevel = async () => {
+        // 查找根分组（没有父ID的分组）
+        const rootGroups = data.groups.filter(group => !group.parent_id || group.parent_id === null);
+        const processedGroups = new Set<number>();
+        let level = 0;
+        let hasMoreGroups = true;
 
-      // 1. 批量处理根分组
-      for (const group of rootGroups) {
-        if (existingGroups.has(group.name)) {
-          // 如果存在同名分组，使用现有分组ID
-          const existingId = existingGroups.get(group.name) as number;
-          if (group.id) {
-            groupMap.set(group.id, existingId);
+        while (hasMoreGroups && level < 10) { // 最多处理10级深度，防止无限循环
+          let levelGroups;
+          
+          if (level === 0) {
+            levelGroups = rootGroups;
+          } else {
+            // 找到所有父ID已处理的子分组
+            levelGroups = data.groups.filter(group => 
+              group.parent_id && 
+              group.parent_id !== null && 
+              groupMap.has(group.parent_id) && 
+              !processedGroups.has(group.id)
+            );
           }
-          stats.groups.merged++;
-        } else {
-          // 如果不存在同名分组，创建新分组（使用batch）
-          const stmt = this.db
-            .prepare('INSERT INTO groups (name, parent_id, order_num, is_public) VALUES (?, ?, ?, ?)')
-            .bind(group.name, null, group.order_num, group.is_public || 1);
-          batchStatements.push(stmt);
-          stats.groups.created++;
-        }
-      }
 
-      // 执行分组批量创建
-      if (batchStatements.length > 0) {
-        await this.db.batch(batchStatements);
-        batchStatements.length = 0; // 清空批次
+          if (levelGroups.length === 0) {
+            hasMoreGroups = false;
+            continue;
+          }
 
-        // 获取最新的分组信息，包含新创建的分组
-        const updatedGroupsResult = await this.db
-          .prepare('SELECT id, name FROM groups')
-          .all<{ id: number; name: string }>();
-        const updatedGroups = new Map(updatedGroupsResult.results?.map(g => [g.name, g.id]) || []);
+          // 处理当前层级的分组
+          for (const group of levelGroups) {
+            const parentId = level === 0 ? null : groupMap.get(group.parent_id!);
+            
+            if (existingGroups.has(group.name)) {
+              // 如果存在同名分组，使用现有分组ID
+              const existingId = existingGroups.get(group.name) as number;
+              if (group.id) {
+                groupMap.set(group.id, existingId);
+              }
+              stats.groups.merged++;
+            } else {
+              // 如果不存在同名分组，创建新分组（使用batch）
+              const stmt = this.db
+                .prepare('INSERT INTO groups (name, parent_id, order_num, is_public) VALUES (?, ?, ?, ?)')
+                .bind(group.name, parentId, group.order_num, group.is_public || 1);
+              batchStatements.push(stmt);
+              stats.groups.created++;
+            }
+            
+            processedGroups.add(group.id);
+          }
 
-        // 更新分组ID映射（对于新创建的根分组）
-        for (const group of rootGroups) {
-          if (!existingGroups.has(group.name) && group.id) {
-            const newId = updatedGroups.get(group.name);
-            if (newId) {
-              groupMap.set(group.id, newId);
+          // 执行当前层级的分组创建
+          if (batchStatements.length > 0) {
+            await this.db.batch(batchStatements);
+            batchStatements.length = 0; // 清空批次
+
+            // 获取最新的分组信息，包含新创建的分组
+            const updatedGroupsResult = await this.db
+              .prepare('SELECT id, name FROM groups')
+              .all<{ id: number; name: string }>();
+            const updatedGroups = new Map(updatedGroupsResult.results?.map(g => [g.name, g.id]) || []);
+
+            // 更新分组ID映射（对于新创建的分组）
+            for (const group of levelGroups) {
+              if (!existingGroups.has(group.name) && group.id) {
+                const newId = updatedGroups.get(group.name);
+                if (newId) {
+                  groupMap.set(group.id, newId);
+                }
+              }
             }
           }
-        }
-      }
 
-      // 2. 批量处理子分组
-      for (const group of subGroups) {
-        const mappedParentId = group.parent_id ? groupMap.get(group.parent_id) : null;
-        
-        if (!mappedParentId) {
-          console.warn(`无法为子分组"${group.name}"找到对应的父分组ID，已跳过`);
-          continue;
+          level++;
         }
 
-        if (existingGroups.has(group.name)) {
-          // 如果存在同名分组，使用现有分组ID
-          const existingId = existingGroups.get(group.name) as number;
-          if (group.id) {
-            groupMap.set(group.id, existingId);
-          }
-          stats.groups.merged++;
-        } else {
-          // 如果不存在同名分组，创建新分组（使用batch）
-          const stmt = this.db
-            .prepare('INSERT INTO groups (name, parent_id, order_num, is_public) VALUES (?, ?, ?, ?)')
-            .bind(group.name, mappedParentId, group.order_num, group.is_public || 1);
-          batchStatements.push(stmt);
-          stats.groups.created++;
+        // 检查是否有未处理的分组
+        const unprocessedGroups = data.groups.filter(group => !processedGroups.has(group.id));
+        if (unprocessedGroups.length > 0) {
+          console.warn(`未处理的分组：${unprocessedGroups.map(g => g.name).join(', ')}`);
         }
-      }
+      };
 
-      // 执行子分组批量创建
-      if (batchStatements.length > 0) {
-        await this.db.batch(batchStatements);
-        batchStatements.length = 0; // 清空批次
-
-        // 更新分组ID映射（对于新创建的子分组）
-        const updatedGroupsResult = await this.db
-          .prepare('SELECT id, name FROM groups')
-          .all<{ id: number; name: string }>();
-        const updatedGroups = new Map(updatedGroupsResult.results?.map(g => [g.name, g.id]) || []);
-
-        for (const group of subGroups) {
-          if (!existingGroups.has(group.name) && group.id) {
-            const newId = updatedGroups.get(group.name);
-            if (newId) {
-              groupMap.set(group.id, newId);
-            }
-          }
-        }
-      }
+      // 按层级处理所有分组
+      await processGroupsByLevel();
 
       // 3. 批量处理站点
       for (const site of data.sites) {

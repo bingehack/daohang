@@ -418,36 +418,72 @@ export class MockNavigationClient {
       // 为分组创建映射 - 旧ID到新ID
       const groupMap = new Map<number, number>();
 
-      // 处理分组
-      for (const importGroup of data.groups) {
-        // 检查是否存在同名分组
-        const existingGroupIndex = mockGroups.findIndex((g) => g.name === importGroup.name);
+      // 按层级处理分组：先处理根分组，再处理一级子分组，以此类推
+      const processedGroups = new Set<number>();
+      let hasMoreGroups = true;
+      let level = 0;
 
-        if (existingGroupIndex >= 0) {
-          // 已存在同名分组，添加到映射
-          const existingGroup = mockGroups[existingGroupIndex];
-          if (importGroup.id && existingGroup && existingGroup.id) {
-            groupMap.set(importGroup.id, existingGroup.id);
-          }
-          stats.groups.merged++;
+      while (hasMoreGroups && level < 10) { // 最多处理10级深度，防止无限循环
+        let levelGroups;
+        
+        if (level === 0) {
+          // 处理根分组
+          levelGroups = data.groups.filter(group => !group.parent_id || group.parent_id === null);
         } else {
-          // 创建新分组
-          const newId = Math.max(0, ...mockGroups.map((g) => g.id || 0)) + 1;
-          const newGroup = {
-            ...importGroup,
-            id: newId,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-
-          mockGroups.push(newGroup);
-
-          // 添加到映射
-          if (importGroup.id) {
-            groupMap.set(importGroup.id, newId);
-          }
-          stats.groups.created++;
+          // 处理当前层级的子分组（父ID已处理）
+          levelGroups = data.groups.filter(group => 
+            group.parent_id && 
+            group.parent_id !== null && 
+            groupMap.has(group.parent_id) && 
+            !processedGroups.has(group.id)
+          );
         }
+
+        if (levelGroups.length === 0) {
+          hasMoreGroups = false;
+          continue;
+        }
+
+        // 处理当前层级的分组
+        for (const importGroup of levelGroups) {
+          // 检查是否存在同名分组
+          const existingGroupIndex = mockGroups.findIndex((g) => g.name === importGroup.name);
+
+          if (existingGroupIndex >= 0) {
+            // 已存在同名分组，添加到映射
+            const existingGroup = mockGroups[existingGroupIndex];
+            if (importGroup.id && existingGroup && existingGroup.id) {
+              groupMap.set(importGroup.id, existingGroup.id);
+            }
+            stats.groups.merged++;
+          } else {
+            // 创建新分组
+            const newId = Math.max(0, ...mockGroups.map((g) => g.id || 0)) + 1;
+            
+            // 映射父ID到新的ID
+            const mappedParentId = importGroup.parent_id ? groupMap.get(importGroup.parent_id) : null;
+            
+            const newGroup = {
+              ...importGroup,
+              id: newId,
+              parent_id: mappedParentId,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+
+            mockGroups.push(newGroup);
+
+            // 添加到映射
+            if (importGroup.id) {
+              groupMap.set(importGroup.id, newId);
+            }
+            stats.groups.created++;
+          }
+          
+          processedGroups.add(importGroup.id);
+        }
+        
+        level++;
       }
 
       // 处理站点
