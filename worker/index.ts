@@ -224,11 +224,26 @@ function validateExportData(data: unknown): { valid: boolean; errors: string[] }
         });
     }
 
-    // 验证 sites
-    if (!Array.isArray(d.sites)) {
-        errors.push('sites 必须是数组');
-    } else {
-        d.sites.forEach((site: unknown, index: number) => {
+    // 验证 sites - 支持两种格式：独立sites数组或嵌套在groups中的sites
+    let allSites: unknown[] = [];
+    
+    if (Array.isArray(d.sites) && d.sites.length > 0) {
+        // 格式1: 独立的sites数组
+        allSites = d.sites;
+    } else if (Array.isArray(d.groups)) {
+        // 格式2: sites嵌套在groups中
+        allSites = d.groups.flatMap((group: unknown) => {
+            if (group && typeof group === 'object') {
+                const g = group as Record<string, unknown>;
+                return Array.isArray(g.sites) ? g.sites : [];
+            }
+            return [];
+        });
+    }
+    
+    // 如果没有找到任何sites，不报错，允许空导入
+    if (allSites.length > 0) {
+        allSites.forEach((site: unknown, index: number) => {
             if (!site || typeof site !== 'object') {
                 errors.push(`sites[${index}]: 必须是对象`);
                 return;

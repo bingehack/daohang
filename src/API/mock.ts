@@ -399,6 +399,20 @@ export class MockNavigationClient {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     try {
+      // 检查sites是否嵌套在groups中（兼容旧格式）
+      let importSites: Site[];
+      if (data.sites && data.sites.length > 0) {
+        // 使用独立的sites数组（新格式）
+        importSites = data.sites;
+      } else {
+        // 从groups中提取sites（旧格式）
+        importSites = data.groups.flatMap(group => {
+          // 类型断言，确保group有sites属性
+          const g = group as Group & { sites?: Site[] };
+          return g.sites || [];
+        });
+      }
+
       // 统计信息
       const stats = {
         groups: {
@@ -407,7 +421,7 @@ export class MockNavigationClient {
           merged: 0,
         },
         sites: {
-          total: data.sites.length,
+          total: importSites.length,
           created: 0,
           updated: 0,
           skipped: 0,
@@ -491,7 +505,7 @@ export class MockNavigationClient {
       }
 
       // 处理站点
-      for (const importSite of data.sites) {
+      for (const importSite of importSites) {
         // 获取新分组ID
         const newGroupId = groupMap.get(importSite.group_id);
 

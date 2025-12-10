@@ -41,6 +41,7 @@ export interface Group {
   is_public?: number; // 0 = 私密（仅管理员可见），1 = 公开（访客可见）
   created_at?: string;
   updated_at?: string;
+  sites?: Site[]; // 可选属性，支持旧格式（sites嵌套在groups中）
 }
 
 export interface Site {
@@ -74,7 +75,7 @@ export interface Config {
 // 扩展导出数据接口，添加导入结果类型
 export interface ExportData {
   groups: Group[];
-  sites: Site[];
+  sites?: Site[]; // 设为可选，支持旧格式（sites嵌套在groups中）
   configs: Record<string, string>;
   version: string;
   exportDate: string;
@@ -378,7 +379,7 @@ export class NavigationAPI {
     return createdGroup;
   }
 
-  async updateGroup(id: number, group: Partial<Group>): Promise<Group | null> {
+  async updateGroup(id: number, group: Partial<Omit<Group, 'sites'>>): Promise<Group | null> {
     // 字段白名单
     const ALLOWED_FIELDS = ['name', 'order_num', 'parent_id', 'is_public'] as const;
     type AllowedField = (typeof ALLOWED_FIELDS)[number];
@@ -760,6 +761,20 @@ export class NavigationAPI {
   // 导入所有数据
   async importData(data: ExportData): Promise<ImportResult> {
     try {
+      // 检查sites是否嵌套在groups中（兼容旧格式）
+      let importSites: Site[];
+      if (data.sites && data.sites.length > 0) {
+        // 使用独立的sites数组（新格式）
+        importSites = data.sites;
+      } else {
+        // 从groups中提取sites（旧格式）
+        importSites = data.groups.flatMap(group => {
+          // 类型断言，确保group有sites属性
+          const g = group as Group & { sites?: Site[] };
+          return g.sites || [];
+        });
+      }
+
       // 统计信息
       const stats = {
         groups: {
@@ -768,7 +783,7 @@ export class NavigationAPI {
           merged: 0,
         },
         sites: {
-          total: data.sites.length,
+          total: importSites.length,
           created: 0,
           updated: 0,
           skipped: 0,
@@ -895,7 +910,7 @@ export class NavigationAPI {
       await processGroupsByLevel();
 
       // 3. 批量处理站点
-      for (const site of data.sites) {
+      for (const site of importSites) {
         // 获取新的分组ID
         const newGroupId = groupMap.get(site.group_id);
 
