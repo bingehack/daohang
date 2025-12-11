@@ -1041,6 +1041,7 @@ interface LoginInput {
 interface GroupInput {
     name?: string;
     order_num?: number;
+    parent_id?: number | null;
     is_public?: number;
 }
 
@@ -1098,6 +1099,17 @@ function validateGroup(data: GroupInput): {
         errors.push("排序号必须是数字");
     } else {
         sanitizedData.order_num = data.order_num;
+    }
+
+    // 验证 parent_id (可选)
+    if (data.parent_id !== undefined) {
+        if (data.parent_id === null || (typeof data.parent_id === "number" && !isNaN(data.parent_id))) {
+            sanitizedData.parent_id = data.parent_id;
+        } else {
+            errors.push("parent_id 必须是数字或 null");
+        }
+    } else {
+        sanitizedData.parent_id = null; // 默认 null
     }
 
     // 验证 is_public (可选，默认为 1 - 公开)
