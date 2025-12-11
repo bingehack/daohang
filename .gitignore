@@ -40,3 +40,27 @@ NEXT.md
 # VitePress 构建产物
 docs/.vitepress/cache
 docs/.vitepress/dist
+
+# 测试数据文件
+*.json
+!package.json
+!tsconfig*.json
+!vite.config.ts
+!wrangler.test.jsonc
+!src/config/searchEngines.ts
+!src/API/*.ts
+
+# 测试/调试脚本
+*.js
+*.py
+
+# 数据库相关文件
+*.sql
+
+# 日志文件夹
+log/
+
+# 临时/备份文件
+*_backup*
+*_output*
+*.tmp
