@@ -62,6 +62,7 @@ export interface Site {
 export interface GroupWithSites extends Group {
   id: number; // 确保 id 存在
   sites: Site[];
+  subgroups?: GroupWithSites[]; // 添加子分类数组，支持层级结构
 }
 
 // 新增配置接口
@@ -558,11 +559,8 @@ export class NavigationAPI {
       }
     }
 
-    // 移除临时添加的 subgroups 属性，确保返回类型正确
-    return rootGroups.map(group => {
-      const { subgroups, ...groupWithoutSubgroups } = group;
-      return groupWithoutSubgroups;
-    });
+    // 返回包含子分组的完整层级结构
+    return rootGroups as GroupWithSites[];
   }
 
   async getSite(id: number): Promise<Site | null> {
