@@ -810,8 +810,24 @@ export class NavigationAPI {
         existingSitesResult.results?.map(s => [`${s.group_id}:${s.url}`, s.id]) || []
       );
 
-      // 创建新旧分组ID的映射
+      // 创建导入数据中的分组名称与ID的映射
+      const importGroupMap = new Map<string, number>();
+      data.groups.forEach(group => {
+        if (group.name && group.id) {
+          importGroupMap.set(group.name, group.id);
+        }
+      });
+
+      // 创建新旧分组ID的映射，并将所有现有分组添加到映射中
       const groupMap = new Map<number, number>();
+      existingGroupsResult.results?.forEach(g => {
+        // 查找现有分组在导入数据中的对应ID
+        const importId = importGroupMap.get(g.name);
+        if (importId) {
+          groupMap.set(importId, g.id);
+        }
+      });
+
       const batchStatements: D1PreparedStatement[] = [];
 
       // 按层级处理分组：先处理根分组，再处理一级子分组，以此类推
@@ -845,6 +861,7 @@ export class NavigationAPI {
 
           // 处理当前层级的分组
           for (const group of levelGroups) {
+            // 获取父分组的新ID（如果是根分组则为null）
             const parentId = level === 0 ? null : groupMap.get(group.parent_id!);
             
             if (existingGroups.has(group.name)) {
@@ -862,11 +879,6 @@ export class NavigationAPI {
               batchStatements.push(stmt);
               stats.groups.created++;
             }
-            
-            // 确保group.id是number类型
-            if (group.id) {
-              processedGroups.add(group.id);
-            }
           }
 
           // 执行当前层级的分组创建
@@ -874,18 +886,18 @@ export class NavigationAPI {
             await this.db.batch(batchStatements);
             batchStatements.length = 0; // 清空批次
 
-            // 获取最新的分组信息，包含新创建的分组
+            // 获取最新的分组信息，包含新创建的分组（需要包含parent_id以便正确映射）
             const updatedGroupsResult = await this.db
-              .prepare('SELECT id, name FROM groups')
-              .all<{ id: number; name: string }>();
-            const updatedGroups = new Map(updatedGroupsResult.results?.map(g => [g.name, g.id]) || []);
+              .prepare('SELECT id, name, parent_id FROM groups')
+              .all<{ id: number; name: string; parent_id?: number | null }>();
+            const updatedGroups = new Map(updatedGroupsResult.results?.map(g => [g.name, g]) || []);
 
             // 更新分组ID映射（对于新创建的分组）
             for (const group of levelGroups) {
               if (!existingGroups.has(group.name) && group.id) {
-                const newId = updatedGroups.get(group.name);
-                if (newId) {
-                  groupMap.set(group.id, newId);
+                const newGroup = updatedGroups.get(group.name);
+                if (newGroup) {
+                  groupMap.set(group.id, newGroup.id);
                 }
               }
               
